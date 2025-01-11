@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+
+set -o pipefail # Return the exit status of the last failed command in a pipeline
+
+if [ -z "${VAULT_TOKEN}" ]; then
+  VAULT_TOKEN=$(cat /data/vault-token)
+  export VAULT_TOKEN
+fi;
+
+set -o nounset  # Treat unset variables as an error
+
+get_aws_credentials_from_vault() {
+    response=$(curl -s \
+        --header "X-Vault-Token: $VAULT_TOKEN" \
+        --request GET \
+        --connect-timeout 10 \
+        --max-time 10 \
+        --retry 5 \
+        --retry-delay 5 \
+        --retry-connrefused \
+        --url "${VAULT_ADDR}/v1/${VAULT_KV2_MOUNT:-secret}/data/${VAULT_RESTIC_AWS_CREDENTIALS_SECRET_PATH}")
+
+    # shellcheck disable=SC2181
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to communicate with Vault"
+        return 1
+    fi
+
+    # Extract AWS Access Key ID and Secret Access Key from the response
+    AWS_ACCESS_KEY_ID=$(echo "$response" | jq -r '.data.data.AWS_ACCESS_KEY_ID')
+    AWS_SECRET_ACCESS_KEY=$(echo "$response" | jq -r '.data.data.AWS_SECRET_ACCESS_KEY')
+
+    # Check if the keys exist in the response
+    if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
+        echo "Error: AWS credentials not found in the secret"
+        return 1
+    fi
+
+    export AWS_ACCESS_KEY_ID
+    export AWS_SECRET_ACCESS_KEY
+
+    echo "Read AWS credentials from Vault"
+}
+
+get_restic_password_from_vault() {
+    response=$(curl -s \
+        --header "X-Vault-Token: $VAULT_TOKEN" \
+        --request GET \
+        --connect-timeout 10 \
+        --max-time 10 \
+        --retry 5 \
+        --retry-delay 5 \
+        --retry-connrefused \
+        --url "${VAULT_ADDR}/v1/${VAULT_KV2_MOUNT:-secret}/data/${VAULT_RESTIC_PASSWORD_SECRET_PATH}")
+
+    # shellcheck disable=SC2181
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to communicate with Vault"
+        return 1
+    fi
+
+    # Extract RESTIC_PASSWORD from the response
+    RESTIC_PASSWORD=$(echo "$response" | jq -r '.data.data.RESTIC_PASSWORD')
+
+    # Check if the key exists in the response
+    if [ -z "$RESTIC_PASSWORD" ]; then
+        echo "Error: RESTIC_PASSWORD not found in the secret"
+        return 1
+    fi
+
+    export RESTIC_PASSWORD
+    echo "Read restic password from Vault"
+}
+
+list_backups() {
+    echo "Listing snapshots in restic repository..."
+    restic snapshots
+}
+
+prune_backups() {
+    echo "Pruning old backups from restic repository..."
+    restic forget --keep-daily=7 --keep-weekly=4 --prune
+}
+
+backup() {
+    # Check if the restic repository exists
+    if ! restic snapshots >/dev/null 2>&1; then
+        echo "Restic repository does not exist, creating it..."
+
+        # Create the repository
+        if ! restic init; then
+            echo "Failed to initialize restic repository. Exiting."
+            exit 1
+        fi
+    else
+        echo "Restic repository exists, proceeding with backup."
+    fi
+
+    if [ ! -d "${TMPDIR:-/tmp}" ]; then
+      mkdir -p "${TMPDIR:-/tmp}"
+    fi
+
+    if vkv export --engine-path="${VAULT_KV2_MOUNT:-/secret}" --format=json | restic backup --stdin --stdin-filename vault-backup.json; then
+        echo "Backup completed successfully."
+    else
+        echo "Backup failed."
+        exit 1
+    fi
+}
+
+# Default subcommand: backup
+subcommand="${1:-backup}"
+
+case $subcommand in
+    list)
+        get_aws_credentials_from_vault
+        get_restic_password_from_vault
+        list_backups
+        ;;
+    prune)
+        get_aws_credentials_from_vault
+        get_restic_password_from_vault
+        prune_backups
+        ;;
+    backup)
+        get_aws_credentials_from_vault
+        get_restic_password_from_vault
+        backup
+        ;;
+    *)
+        echo "Unknown subcommand: $subcommand"
+        echo "Usage: $0 {list|clean|backup}"
+        exit 1
+        ;;
+esac
