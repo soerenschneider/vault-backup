@@ -132,9 +132,15 @@ case $subcommand in
         get_restic_password_from_vault
         backup
         ;;
+    backup-prune)
+        get_aws_credentials_from_vault
+        get_restic_password_from_vault
+        backup
+        prune_backups
+        ;;
     *)
         echo "Unknown subcommand: $subcommand"
-        echo "Usage: $0 {list|clean|backup}"
+        echo "Usage: $0 {list|clean|backup|backup-prune}"
         exit 1
         ;;
 esac
