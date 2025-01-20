@@ -1,10 +1,10 @@
-FROM golang:1.23.4 AS build-vkv
+FROM golang:1.23.5 AS build-vkv
 
 # renovate: datasource=github-releases depName=FalcoSuessgott/vkv
 ARG VKV_VERSION=v0.8.4
 RUN CGO_ENABLED=0 go install github.com/FalcoSuessgott/vkv@${VKV_VERSION}
 
-FROM golang:1.23.4 AS build-restic
+FROM golang:1.23.5 AS build-restic
 
 # renovate: datasource=github-releases depName=restic/restic
 ARG RESTIC_VERSION=v0.17.3
