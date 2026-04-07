@@ -16,7 +16,7 @@ RUN apt update && \
 WORKDIR /restic
 RUN CGO_ENABLED=0 go run helpers/build-release-binaries/main.go -p linux/amd64 --skip-compress
 
-FROM alpine:3.21.2
+FROM alpine:3.21.3
 
 COPY --from=build-vkv /go/bin/vkv /usr/bin/vkv
 COPY --from=build-restic /output/restic_linux_amd64 /usr/bin/restic
